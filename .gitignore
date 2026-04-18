@@ -7,3 +7,6 @@
 "frontend/dist/" 
 "logs/" 
 ".DS_Store" 
+".env"  
+"backend/.env"  
+"frontend/.env" 
