@@ -1,5 +1,5 @@
 // src/api.js — BUGTRACKER v2 API Client
-const BASE = "/api/v1";
+const BASE = (import.meta.env.VITE_API_URL || "https://bugtracker-api-qqkx.onrender.com") + "/api/v1";
 
 const storage = {
   get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
