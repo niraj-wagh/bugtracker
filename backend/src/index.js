@@ -29,8 +29,9 @@ const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000")
 
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS blocked: ${origin}`));
+   if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) 
+    return cb(null, true);
+  cb(new Error(`CORS blocked: ${origin}`));
   },
   credentials: true,
   methods: ["GET","POST","PATCH","PUT","DELETE","OPTIONS"],
