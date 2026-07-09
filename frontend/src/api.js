@@ -1,5 +1,10 @@
-// src/api.js — BUGTRACKER v2 API Client
-const BASE = "/api/v1";
+// src/api.js — BUGTRACKER API Client
+// Reads API URL from runtime config (public/config.js) — no rebuild needed to change URL
+const BASE = window.__API_URL__
+  || import.meta.env.VITE_API_URL
+  || "/api/v1";
+
+console.log("[BUGTRACKER] API URL:", BASE);
 
 const storage = {
   get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
@@ -15,7 +20,7 @@ export const clearTokens     = ()  => { storage.del("bt_access"); storage.del("b
 export const getStoredUser   = ()  => storage.get("bt_user");
 export const setStoredUser   = u   => storage.set("bt_user", u);
 export const getActiveWs     = ()  => storage.get("bt_active_ws");
-export const setActiveWs     = id  => storage.set("bt_active_ws", id);
+export const setActiveWs     = id  => id ? storage.set("bt_active_ws", id) : storage.del("bt_active_ws");
 
 let refreshPromise = null;
 
@@ -24,7 +29,12 @@ async function apiFetch(path, opts = {}, retry = true) {
   const headers = { "Content-Type": "application/json", ...opts.headers };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, { ...opts, headers });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, { ...opts, headers });
+  } catch (e) {
+    throw new Error("Cannot reach server. Please check your connection.");
+  }
 
   if (res.status === 401 && retry) {
     const refreshToken = getRefreshToken();
@@ -61,72 +71,66 @@ const post  = (path, body, opts) => apiFetch(path, { method: "POST",   body: JSO
 const patch = (path, body, opts) => apiFetch(path, { method: "PATCH",  body: JSON.stringify(body), ...opts });
 const del   = (path, opts)       => apiFetch(path, { method: "DELETE", ...opts });
 
-// ── Auth ──────────────────────────────────────────────────────
 export const auth = {
-  register:    data            => post("/auth/register", data),
-  login:       (email, pass)   => post("/auth/login", { email, password: pass }),
-  loginGoogle: credential      => post("/auth/google", { credential }),
-  refresh:     rt              => post("/auth/refresh", { refreshToken: rt }),
-  logout:      rt              => post("/auth/logout",  { refreshToken: rt }),
-  me:          ()              => get("/auth/me"),
-  bootstrap:   ()              => get("/auth/bootstrap"),
-  updateMe:    data            => patch("/auth/me", data),
+  register:    data          => post("/auth/register", data),
+  login:       (email, pass) => post("/auth/login", { email, password: pass }),
+  loginGoogle: credential    => post("/auth/google", { credential }),
+  refresh:     rt            => post("/auth/refresh", { refreshToken: rt }),
+  logout:      rt            => post("/auth/logout",  { refreshToken: rt }),
+  me:          ()            => get("/auth/me"),
+  bootstrap:   ()            => get("/auth/bootstrap"),
+  updateMe:    data          => patch("/auth/me", data),
 };
 
-// ── Workspaces ────────────────────────────────────────────────
 export const workspaces = {
-  list:         ()             => get("/workspaces"),
-  create:       data           => post("/workspaces", data),
-  get:          id             => get(`/workspaces/${id}`),
-  update:       (id, data)     => patch(`/workspaces/${id}`, data),
-  delete:       id             => del(`/workspaces/${id}`),
-  stats:        id             => get(`/workspaces/${id}/stats`),
-  members:      id             => get(`/workspaces/${id}/members`),
+  list:         ()              => get("/workspaces"),
+  create:       data            => post("/workspaces", data),
+  get:          id              => get(`/workspaces/${id}`),
+  update:       (id, data)      => patch(`/workspaces/${id}`, data),
+  delete:       id              => del(`/workspaces/${id}`),
+  stats:        id              => get(`/workspaces/${id}/stats`),
+  members:      id              => get(`/workspaces/${id}/members`),
   updateRole:   (id, uid, role) => patch(`/workspaces/${id}/members/${uid}/role`, { role }),
-  removeMember: (id, uid)      => del(`/workspaces/${id}/members/${uid}`),
-  invite:       (id, data)     => post(`/workspaces/${id}/invite`, data),
-  invites:      id             => get(`/workspaces/${id}/invites`),
-  cancelInvite: (id, inviteId) => del(`/workspaces/${id}/invites/${inviteId}`),
-  acceptInvite: token          => post(`/workspaces/accept-invite/${token}`, {}),
+  removeMember: (id, uid)       => del(`/workspaces/${id}/members/${uid}`),
+  invite:       (id, data)      => post(`/workspaces/${id}/invite`, data),
+  invites:      id              => get(`/workspaces/${id}/invites`),
+  cancelInvite: (id, iid)       => del(`/workspaces/${id}/invites/${iid}`),
+  acceptInvite: token           => post(`/workspaces/accept-invite/${token}`, {}),
 };
 
-// ── Projects ──────────────────────────────────────────────────
 export const projects = {
-  list:        (workspaceId)   => get(`/projects?workspaceId=${workspaceId}`),
-  create:      data            => post("/projects", data),
-  get:         id              => get(`/projects/${id}`),
-  update:      (id, data)      => patch(`/projects/${id}`, data),
-  delete:      id              => del(`/projects/${id}`),
-  addMember:   (id, data)      => post(`/projects/${id}/members`, data),
-  removeMember:(id, uid)       => del(`/projects/${id}/members/${uid}`),
-  stats:       id              => get(`/projects/${id}/stats`),
-  activity:    id              => get(`/projects/${id}/activity`),
+  list:         wsId            => get(`/projects?workspaceId=${wsId}`),
+  create:       data            => post("/projects", data),
+  get:          id              => get(`/projects/${id}`),
+  update:       (id, data)      => patch(`/projects/${id}`, data),
+  delete:       id              => del(`/projects/${id}`),
+  addMember:    (id, data)      => post(`/projects/${id}/members`, data),
+  removeMember: (id, uid)       => del(`/projects/${id}/members/${uid}`),
+  stats:        id              => get(`/projects/${id}/stats`),
+  activity:     id              => get(`/projects/${id}/activity`),
 };
 
-// ── Epics ─────────────────────────────────────────────────────
 export const epics = {
-  list:   projectId            => get(`/projects/${projectId}/epics`),
-  create: (projectId, data)    => post(`/projects/${projectId}/epics`, data),
-  update: (id, data)           => patch(`/epics/${id}`, data),
-  delete: id                   => del(`/epics/${id}`),
+  list:   pid               => get(`/projects/${pid}/epics`),
+  create: (pid, data)       => post(`/projects/${pid}/epics`, data),
+  update: (id, data)        => patch(`/epics/${id}`, data),
+  delete: id                => del(`/epics/${id}`),
 };
 
-// ── Tickets ───────────────────────────────────────────────────
 export const tickets = {
-  list:    (projectId, params = {}) => {
+  list: (pid, params = {}) => {
     const q = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v]) => v)));
-    return get(`/projects/${projectId}/tickets${q.toString() ? "?" + q : ""}`);
+    return get(`/projects/${pid}/tickets${q.toString() ? "?" + q : ""}`);
   },
-  create:        (projectId, data) => post(`/projects/${projectId}/tickets`, data),
-  get:           id               => get(`/tickets/${id}`),
-  update:        (id, data)       => patch(`/tickets/${id}`, data),
-  delete:        id               => del(`/tickets/${id}`),
-  addComment:    (id, body)       => post(`/tickets/${id}/comments`, { body }),
-  editComment:   (id, cid, body)  => patch(`/tickets/${id}/comments/${cid}`, { body }),
-  deleteComment: (id, cid)        => del(`/tickets/${id}/comments/${cid}`),
+  create:        (pid, data)    => post(`/projects/${pid}/tickets`, data),
+  get:           id             => get(`/tickets/${id}`),
+  update:        (id, data)     => patch(`/tickets/${id}`, data),
+  delete:        id             => del(`/tickets/${id}`),
+  addComment:    (id, body)     => post(`/tickets/${id}/comments`, { body }),
+  editComment:   (id, cid, b)   => patch(`/tickets/${id}/comments/${cid}`, { body: b }),
+  deleteComment: (id, cid)      => del(`/tickets/${id}/comments/${cid}`),
 };
 
-// ── Tokens ────────────────────────────────────────────────────
 export const tokens = {
   list:   ()     => get("/tokens"),
   create: data   => post("/tokens", data),
@@ -134,7 +138,6 @@ export const tokens = {
   verify: ()     => get("/tokens/verify"),
 };
 
-// ── Users ─────────────────────────────────────────────────────
 export const users = {
   list:    ()         => get("/users"),
   get:     id         => get(`/users/${id}`),
