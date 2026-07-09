@@ -11,22 +11,16 @@ const Activity  = require("../models/Activity");
 const { authenticate } = require("../middleware/auth");
 const { validate }     = require("../middleware/error");
 const { log }          = require("../utils/activity");
-
-const isMember = (project, userId) =>
-  project.ownerId.toString() === userId.toString() ||
-  project.members.some(m => m.userId.toString() === userId.toString());
-
-const isWsMember = (ws, userId) =>
-  ws.ownerId.toString() === userId.toString() ||
-  ws.members.some(m => m.userId.toString() === userId.toString());
+const { isMember, isWsMember } = require("../utils/access");
 
 // GET /projects?workspaceId=xxx
 router.get("/", authenticate, async (req, res, next) => {
   try {
     const { workspaceId } = req.query;
-    const query = {
-      $or: [{ ownerId: req.user._id }, { "members.userId": req.user._id }],
-    };
+    const query = {};
+    if (req.user.role !== "admin") {
+      query.$or = [{ ownerId: req.user._id }, { "members.userId": req.user._id }];
+    }
     if (workspaceId) query.workspaceId = workspaceId;
 
     const projects = await Project.find(query)
@@ -65,7 +59,7 @@ router.post("/", authenticate,
 
       const ws = await Workspace.findById(workspaceId);
       if (!ws) return res.status(404).json({ error: "Workspace not found" });
-      if (!isWsMember(ws, req.user._id)) return res.status(403).json({ error: "Not a workspace member" });
+      if (!isWsMember(ws, req.user._id, req.user)) return res.status(403).json({ error: "Not a workspace member" });
 
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")
         + "-" + Date.now().toString(36);
@@ -91,7 +85,7 @@ router.get("/:id", authenticate, async (req, res, next) => {
       .populate("ownerId", "name email color avatar")
       .populate("members.userId", "name email color avatar");
     if (!project) return res.status(404).json({ error: "Project not found" });
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Not a project member" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Not a project member" });
     res.json({ project });
   } catch (err) { next(err); }
 });
@@ -138,7 +132,7 @@ router.post("/:id/members", authenticate,
     try {
       const project = await Project.findById(req.params.id);
       if (!project) return res.status(404).json({ error: "Project not found" });
-      if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+      if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
       const user = await User.findOne({ email: req.body.email });
       if (!user) return res.status(404).json({ error: "User not found" });
@@ -169,7 +163,7 @@ router.delete("/:id/members/:userId", authenticate, async (req, res, next) => {
 router.get("/:id/activity", authenticate, async (req, res, next) => {
   try {
     const project = await Project.findById(req.params.id);
-    if (!project || !isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!project || !isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
     const activities = await Activity.find({ projectId: project._id })
       .populate("actorId", "name email color avatar")
       .sort({ createdAt: -1 }).limit(50);
@@ -181,7 +175,7 @@ router.get("/:id/activity", authenticate, async (req, res, next) => {
 router.get("/:id/stats", authenticate, async (req, res, next) => {
   try {
     const project = await Project.findById(req.params.id);
-    if (!project || !isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!project || !isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     const [byStatus, byPriority] = await Promise.all([
       Ticket.aggregate([
