@@ -8,13 +8,10 @@ const Comment  = require("../models/Comment");
 const { authenticate } = require("../middleware/auth");
 const { validate }     = require("../middleware/error");
 const { log }          = require("../utils/activity");
+const { isMember }     = require("../utils/access");
 
 const STATUSES   = ["Backlog","To Do","In Progress","Review","Done"];
 const PRIORITIES = ["Critical","High","Medium","Low"];
-
-const isMember = (project, userId) =>
-  project.ownerId.toString() === userId.toString() ||
-  project.members.some((m) => m.userId.toString() === userId.toString());
 
 // GET /projects/:projectId/tickets
 router.get("/projects/:projectId/tickets", authenticate,
@@ -32,7 +29,7 @@ router.get("/projects/:projectId/tickets", authenticate,
     try {
       const project = await Project.findById(req.params.projectId);
       if (!project) return res.status(404).json({ error: "Project not found" });
-      if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+      if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
       const { status, priority, assigneeId, q, page=1, limit=50, sort="-createdAt" } = req.query;
 
@@ -78,7 +75,7 @@ router.post(
     try {
       const project = await Project.findById(req.params.projectId);
       if (!project) return res.status(404).json({ error: "Project not found" });
-      if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+      if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
       const ticket = await Ticket.create({
         ...req.body,
@@ -109,7 +106,7 @@ router.get("/tickets/:id", authenticate, [param("id").isMongoId()], validate, as
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     const project = await Project.findById(ticket.projectId);
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     const comments = await Comment.find({ ticketId: ticket._id })
       .populate("authorId", "name email color avatar")
@@ -126,7 +123,7 @@ router.patch("/tickets/:id", authenticate, [param("id").isMongoId()], validate, 
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     const project = await Project.findById(ticket.projectId);
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     const prevStatus = ticket.status;
     const allowed = ["title","description","status","priority","assigneeId","labels","estimate","timeSpent","dueDate"];
@@ -158,7 +155,7 @@ router.delete("/tickets/:id", authenticate, [param("id").isMongoId()], validate,
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     const project = await Project.findById(ticket.projectId);
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     await Comment.deleteMany({ ticketId: ticket._id });
     await ticket.deleteOne();
@@ -180,7 +177,7 @@ router.post("/tickets/:id/comments", authenticate,
       if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
       const project = await Project.findById(ticket.projectId);
-      if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+      if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
       const comment = await Comment.create({
         ticketId: ticket._id,
