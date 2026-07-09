@@ -8,17 +8,14 @@ const Ticket  = require("../models/Ticket");
 const Workspace = require("../models/Workspace");
 const { authenticate } = require("../middleware/auth");
 const { validate }     = require("../middleware/error");
-
-const isMember = (p, uid) =>
-  p.ownerId.toString() === uid.toString() ||
-  p.members.some(m => m.userId.toString() === uid.toString());
+const { isMember }     = require("../utils/access");
 
 // GET /projects/:projectId/epics
 router.get("/projects/:projectId/epics", authenticate, async (req, res, next) => {
   try {
     const project = await Project.findById(req.params.projectId);
     if (!project) return res.status(404).json({ error: "Project not found" });
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     const epics = await Epic.find({ projectId: project._id })
       .populate("ownerId", "name email color avatar")
@@ -62,7 +59,7 @@ router.post("/projects/:projectId/epics", authenticate,
     try {
       const project = await Project.findById(req.params.projectId);
       if (!project) return res.status(404).json({ error: "Project not found" });
-      if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+      if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
       const epic = await Epic.create({
         ...req.body,
@@ -83,7 +80,7 @@ router.patch("/epics/:id", authenticate, [param("id").isMongoId()], validate, as
     if (!epic) return res.status(404).json({ error: "Epic not found" });
 
     const project = await Project.findById(epic.projectId);
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     const allowed = ["title","description","status","priority","color","dueDate","startDate","ownerId"];
     allowed.forEach(k => { if (req.body[k] !== undefined) epic[k] = req.body[k]; });
@@ -99,7 +96,7 @@ router.delete("/epics/:id", authenticate, [param("id").isMongoId()], validate, a
     const epic = await Epic.findById(req.params.id);
     if (!epic) return res.status(404).json({ error: "Epic not found" });
     const project = await Project.findById(epic.projectId);
-    if (!isMember(project, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!isMember(project, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     // Unlink tickets from epic
     await Ticket.updateMany({ epicId: epic._id }, { epicId: null });
