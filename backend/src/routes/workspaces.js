@@ -13,11 +13,14 @@ const { authenticate } = require("../middleware/auth");
 const { validate }     = require("../middleware/error");
 const { log }          = require("../utils/activity");
 
-const isMember = (ws, userId) =>
-  ws.ownerId.toString() === userId.toString() ||
-  ws.members.some(m => m.userId.toString() === userId.toString());
+const isMember = (ws, userId, user) => {
+  if (user?.role === "admin") return true;
+  return ws.ownerId.toString() === userId.toString() ||
+    ws.members.some(m => m.userId.toString() === userId.toString());
+};
 
-const getMemberRole = (ws, userId) => {
+const getMemberRole = (ws, userId, user) => {
+  if (user?.role === "admin") return "owner";
   if (ws.ownerId.toString() === userId.toString()) return "owner";
   const m = ws.members.find(m => m.userId.toString() === userId.toString());
   return m ? m.role : null;
@@ -28,10 +31,11 @@ const canManage = (role) => ["owner","admin"].includes(role);
 // GET /workspaces — list all workspaces for current user
 router.get("/", authenticate, async (req, res, next) => {
   try {
-    const workspaces = await Workspace.find({
-      $or: [{ ownerId: req.user._id }, { "members.userId": req.user._id }],
-      isArchived: false,
-    })
+    const wsFilter = { isArchived: false };
+    if (req.user.role !== "admin") {
+      wsFilter.$or = [{ ownerId: req.user._id }, { "members.userId": req.user._id }];
+    }
+    const workspaces = await Workspace.find(wsFilter)
       .populate("ownerId", "name email color avatar")
       .sort({ createdAt: -1 });
 
@@ -91,8 +95,8 @@ router.get("/:id", authenticate, async (req, res, next) => {
       .populate("ownerId", "name email color avatar")
       .populate("members.userId", "name email color avatar");
     if (!ws) return res.status(404).json({ error: "Workspace not found" });
-    if (!isMember(ws, req.user._id)) return res.status(403).json({ error: "Not a member" });
-    res.json({ workspace: { ...ws.toJSON(), _myRole: getMemberRole(ws, req.user._id) } });
+    if (!isMember(ws, req.user._id, req.user)) return res.status(403).json({ error: "Not a member" });
+    res.json({ workspace: { ...ws.toJSON(), _myRole: getMemberRole(ws, req.user._id, req.user) } });
   } catch (err) { next(err); }
 });
 
@@ -104,7 +108,7 @@ router.patch("/:id", authenticate,
     try {
       const ws = await Workspace.findById(req.params.id);
       if (!ws) return res.status(404).json({ error: "Workspace not found" });
-      const role = getMemberRole(ws, req.user._id);
+      const role = getMemberRole(ws, req.user._id, req.user);
       if (!canManage(role)) return res.status(403).json({ error: "Insufficient permissions" });
 
       const allowed = ["name","description","color","icon","isArchived"];
@@ -133,7 +137,7 @@ router.delete("/:id", authenticate, async (req, res, next) => {
 router.get("/:id/stats", authenticate, async (req, res, next) => {
   try {
     const ws = await Workspace.findById(req.params.id);
-    if (!ws || !isMember(ws, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!ws || !isMember(ws, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
 
     const projects = await Project.find({ workspaceId: ws._id });
     const projectIds = projects.map(p => p._id);
@@ -203,7 +207,7 @@ router.get("/:id/members", authenticate, async (req, res, next) => {
   try {
     const ws = await Workspace.findById(req.params.id)
       .populate("members.userId", "name email color avatar role lastLoginAt");
-    if (!ws || !isMember(ws, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!ws || !isMember(ws, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
     res.json({ members: ws.members });
   } catch (err) { next(err); }
 });
@@ -216,7 +220,7 @@ router.patch("/:id/members/:userId/role", authenticate,
     try {
       const ws = await Workspace.findById(req.params.id);
       if (!ws) return res.status(404).json({ error: "Workspace not found" });
-      const myRole = getMemberRole(ws, req.user._id);
+      const myRole = getMemberRole(ws, req.user._id, req.user);
       if (!canManage(myRole)) return res.status(403).json({ error: "Insufficient permissions" });
 
       const member = ws.members.find(m => m.userId.toString() === req.params.userId);
@@ -235,7 +239,7 @@ router.delete("/:id/members/:userId", authenticate, async (req, res, next) => {
   try {
     const ws = await Workspace.findById(req.params.id);
     if (!ws) return res.status(404).json({ error: "Workspace not found" });
-    const myRole = getMemberRole(ws, req.user._id);
+    const myRole = getMemberRole(ws, req.user._id, req.user);
     const isSelf = req.params.userId === req.user._id.toString();
     if (!canManage(myRole) && !isSelf) return res.status(403).json({ error: "Insufficient permissions" });
 
@@ -253,7 +257,7 @@ router.post("/:id/invite", authenticate,
     try {
       const ws = await Workspace.findById(req.params.id);
       if (!ws) return res.status(404).json({ error: "Workspace not found" });
-      const myRole = getMemberRole(ws, req.user._id);
+      const myRole = getMemberRole(ws, req.user._id, req.user);
       if (!canManage(myRole)) return res.status(403).json({ error: "Insufficient permissions" });
 
       const { email, role = "member" } = req.body;
@@ -297,7 +301,7 @@ router.post("/:id/invite", authenticate,
 router.get("/:id/invites", authenticate, async (req, res, next) => {
   try {
     const ws = await Workspace.findById(req.params.id);
-    if (!ws || !isMember(ws, req.user._id)) return res.status(403).json({ error: "Forbidden" });
+    if (!ws || !isMember(ws, req.user._id, req.user)) return res.status(403).json({ error: "Forbidden" });
     const invites = await Invite.find({ workspaceId: ws._id, status: "pending" })
       .populate("invitedBy", "name email")
       .sort({ createdAt: -1 });
@@ -317,7 +321,7 @@ router.post("/accept-invite/:token", authenticate, async (req, res, next) => {
     }
 
     const ws = invite.workspaceId;
-    if (!isMember(ws, req.user._id)) {
+    if (!isMember(ws, req.user._id, req.user)) {
       ws.members.push({ userId: req.user._id, role: invite.role });
       await ws.save();
     }
@@ -335,7 +339,7 @@ router.delete("/:id/invites/:inviteId", authenticate, async (req, res, next) => 
   try {
     const ws = await Workspace.findById(req.params.id);
     if (!ws) return res.status(404).json({ error: "Workspace not found" });
-    const myRole = getMemberRole(ws, req.user._id);
+    const myRole = getMemberRole(ws, req.user._id, req.user);
     if (!canManage(myRole)) return res.status(403).json({ error: "Insufficient permissions" });
 
     await Invite.findByIdAndDelete(req.params.inviteId);
